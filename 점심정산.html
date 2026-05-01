@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>팀 점심 정산</title>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/pretendard/1.3.9/static/pretendard.min.css" rel="stylesheet"/>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+    const firebaseConfig = {
+      apiKey: "AIzaSyAW40r7bKqVyysdIH1zm6hYYvdGNFrT0r8",
+      authDomain: "lunch-settlement.firebaseapp.com",
+      databaseURL: "https://lunch-settlement-default-rtdb.asia-southeast1.firebasedatabase.app",
+      projectId: "lunch-settlement",
+      storageBucket: "lunch-settlement.firebasestorage.app",
+      messagingSenderId: "570182735488",
+      appId: "1:570182735488:web:266706c6fc98a096613865"
+    };
+    const app = initializeApp(firebaseConfig);
+    const db = getDatabase(app);
+    onValue(ref(db, "lunchData"), (snap) => {
+      window.__fbData = snap.val() || {};
+      window.dispatchEvent(new Event("fbDataUpdated"));
+    });
+  </script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #F5F3EE; }
+    ::-webkit-scrollbar { display: none; }
+    * { scrollbar-width: none; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+    const DEFAULT_MEMBERS = ["신봉일", "이시정", "전영옥", "안태욱"];
+    const ACCOUNT_INFO = "토스뱅크 1000-6704-2292 안태욱";
+    const PALETTE = ["#D95D39","#1B7CA3","#3A8F60","#7B4BB2","#C2255C","#E67700","#0B7285","#5C940D","#862E9C","#364FC7"];
+    const MONTHS = Array.from({ length: 12 }, (_, i) => `${i + 1}월`);
+
+    function fmt(n) { return n === 0 ? "0" : (n?.toLocaleString("ko-KR") ?? ""); }
+    function mc(members, i) { return PALETTE[i % PALETTE.length]; }
+    function calcBalance(data, members) {
+      const spent = members.reduce((o,m)=>({...o,[m]:0}),{});
+      (data.entries||[]).forEach(e => { members.forEach(m => { spent[m] += (e.amounts?.[m]||0)+(e.coffeeAmounts?.[m]||0); }); });
+      const total={}, balance={};
+      members.forEach(m => {
+        const chargeVal = data.charges?.[m];
+        const chargeAmt = typeof chargeVal === "object" ? (chargeVal?.amount||0) : (chargeVal||0);
+        total[m]=(data.prevBalance?.[m]||0)+chargeAmt; balance[m]=total[m]-spent[m];
+      });
+      return { spent, total, balance };
+    }
+    function getChargeAmount(charges, m) {
+      const v = charges?.[m];
+      return typeof v === "object" ? (v?.amount||0) : (v||0);
+    }
+    function getChargeDate(charges, m) {
+      const v = charges?.[m];
+      return typeof v === "object" ? (v?.date||"") : "";
+    }
+    function buildMenuLabel(entry) {
+      let l = entry.menu||"";
+      if (entry.isDelivery && entry.hasCoffee) l+="(배달)+커피";
+      else if (entry.isDelivery) l+="(배달)";
+      else if (entry.hasCoffee) l+="+커피";
+      return l;
+    }
+
+    function App() {
+      const [fbData, setFbData] = useState(window.__fbData || {});
+      const [month, setMonth] = useState(`${new Date().getMonth()+1}월`);
+      const [loading, setLoading] = useState(!window.__fbData);
+
+      useEffect(() => {
+        const handler = () => { setFbData({...window.__fbData}); setLoading(false); };
+        window.addEventListener("fbDataUpdated", handler);
+        return () => window.removeEventListener("fbDataUpdated", handler);
+      }, []);
+
+      const members = fbData.members || DEFAULT_MEMBERS;
+      const monthData = fbData.months?.[month] || { charges:{}, prevBalance:{}, entries:[] };
+      const monthlyBalance = fbData.monthlyBalance || {};
+      const { spent, total, balance } = calcBalance(monthData, members);
+      const totalSpentAll = members.reduce((s,m)=>s+(spent[m]||0),0);
+      const totalBalanceAll = members.reduce((s,m)=>s+(balance[m]||0),0);
+
+      if (loading) return (
+        <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#F5F3EE",flexDirection:"column",gap:12}}>
+          <div style={{fontSize:28}}>🍽️</div>
+          <div style={{fontSize:14,color:"#999",fontWeight:600}}>데이터 불러오는 중...</div>
+        </div>
+      );
+
+      return (
+        <div style={{minHeight:"100vh",background:"#F5F3EE",fontFamily:"'Pretendard',-apple-system,sans-serif"}}>
+          <div style={{background:"linear-gradient(145deg,#1C1C1C,#2E2E2E)",color:"#fff",padding:"24px 20px 16px",position:"sticky",top:0,zIndex:50}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div>
+                <div style={{fontSize:20,fontWeight:800,letterSpacing:-0.5}}>🍽️ 팀 점심 정산</div>
+                <div style={{fontSize:11,color:"rgba(255,255,255,.45)",marginTop:2}}>충전 → {ACCOUNT_INFO}</div>
+              </div>
+              <div style={{padding:"4px 10px",border:"1px solid rgba(255,255,255,.2)",borderRadius:8,background:"rgba(255,255,255,.08)",color:"rgba(255,255,255,.5)",fontSize:11,fontWeight:600}}>👁️ 보기 전용</div>
+            </div>
+          </div>
+
+          <div style={{display:"flex",gap:4,padding:"12px 12px 0",overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
+            {MONTHS.map(m=>(
+              <button key={m} onClick={()=>setMonth(m)} style={{padding:"7px 14px",border:"none",borderRadius:18,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap",flexShrink:0,background:m===month?"#1C1C1C":"#fff",color:m===month?"#fff":"#999",boxShadow:m===month?"0 2px 8px rgba(0,0,0,.15)":"0 1px 2px rgba(0,0,0,.05)"}}>{m}</button>
+            ))}
+          </div>
+
+          <div style={{padding:"12px 12px 40px",maxWidth:780,margin:"0 auto"}}>
+            <div style={{display:"grid",gridTemplateColumns:`repeat(${Math.min(members.length,4)},1fr)`,gap:6,marginBottom:12}}>
+              {members.map((m,i)=>(
+                <div key={m} style={{background:"#fff",borderRadius:10,padding:"12px 8px",boxShadow:"0 1px 3px rgba(0,0,0,.05)",textAlign:"center",borderTop:`3px solid ${mc(members,i)}`}}>
+                  <div style={{fontSize:12,fontWeight:700,color:mc(members,i),whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{m}</div>
+                  <div style={{fontSize:16,fontWeight:800,marginTop:5,letterSpacing:-0.5,color:(balance[m]||0)<20000?"#C92A2A":"#1A1A1A"}}>{fmt(balance[m]||0)}</div>
+                  <div style={{fontSize:10,color:"#999",marginTop:2}}>잔액</div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{display:"flex",gap:6,marginBottom:16}}>
+              <div style={{flex:1,background:"#fff",borderRadius:10,padding:"10px 14px",boxShadow:"0 1px 3px rgba(0,0,0,.05)",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span style={{fontSize:11,color:"#999",fontWeight:600}}>총 사용</span>
+                <span style={{fontSize:15,fontWeight:800,color:"#D95D39"}}>{fmt(totalSpentAll)}원</span>
+              </div>
+              <div style={{flex:1,background:"#fff",borderRadius:10,padding:"10px 14px",boxShadow:"0 1px 3px rgba(0,0,0,.05)",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span style={{fontSize:11,color:"#999",fontWeight:600}}>총 잔액</span>
+                <span style={{fontSize:15,fontWeight:800,color:"#3A8F60"}}>{fmt(totalBalanceAll)}원</span>
+              </div>
+            </div>
+
+            <div style={{background:"#fff",borderRadius:10,padding:14,marginBottom:16,boxShadow:"0 1px 3px rgba(0,0,0,.05)",overflowX:"auto"}}>
+              <div style={{fontSize:12,fontWeight:700,marginBottom:10,color:"#666"}}>{month} 정산 요약</div>
+              <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,minWidth:members.length*80+120}}>
+                <thead>
+                  <tr style={{borderBottom:"2px solid #E8E4DD"}}>
+                    <th style={{textAlign:"left",padding:"6px 4px",color:"#999",fontWeight:600,whiteSpace:"nowrap"}}>구분</th>
+                    {members.map((m,i)=><th key={m} style={{textAlign:"right",padding:"6px 4px",color:mc(members,i),fontWeight:700,whiteSpace:"nowrap"}}>{m}</th>)}
+                    <th style={{textAlign:"right",padding:"6px 4px",color:"#999",fontWeight:600}}>합계</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    {label:"이전잔액",vals:monthData.prevBalance||{},color:"#999"},
+                    {label:"충전",vals:monthData.charges||{},color:"#D95D39",isCharge:true},
+                    {label:"사용가능",vals:total,color:"#1B7CA3"},
+                    {label:"사용",vals:spent,color:"#999"},
+                  ].map(row=>(
+                    <tr key={row.label} style={{borderBottom:"1px solid #F1F0ED"}}>
+                      <td style={{padding:"6px 4px",color:row.color,whiteSpace:"nowrap"}}>{row.label}</td>
+                      {members.map(m=>(
+                        <td key={m} style={{textAlign:"right",padding:"6px 4px",color:row.color==="#D95D39"?row.color:undefined}}>
+                          {row.isCharge ? (
+                            <div>
+                              <div>{fmt(getChargeAmount(row.vals,m))}</div>
+                              {getChargeDate(row.vals,m)&&<div style={{fontSize:9,color:"#F08060",marginTop:1}}>{getChargeDate(row.vals,m)}</div>}
+                            </div>
+                          ) : fmt(row.vals[m]||0)}
+                        </td>
+                      ))}
+                      <td style={{textAlign:"right",padding:"6px 4px",fontWeight:600,color:row.color==="#D95D39"?row.color:undefined}}>
+                        {row.isCharge ? fmt(members.reduce((s,m)=>s+getChargeAmount(row.vals,m),0)) : fmt(members.reduce((s,m)=>s+(row.vals[m]||0),0))}
+                      </td>
+                    </tr>
+                  ))}
+                  <tr>
+                    <td style={{padding:"6px 4px",fontWeight:800}}>잔액</td>
+                    {members.map((m,i)=><td key={m} style={{textAlign:"right",padding:"6px 4px",fontWeight:800,color:(balance[m]||0)<20000?"#C92A2A":mc(members,i)}}>{fmt(balance[m]||0)}</td>)}
+                    <td style={{textAlign:"right",padding:"6px 4px",fontWeight:800,color:"#3A8F60"}}>{fmt(totalBalanceAll)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div style={{background:"#fff",borderRadius:10,padding:14,marginBottom:16,boxShadow:"0 1px 3px rgba(0,0,0,.05)",overflowX:"auto"}}>
+              <div style={{fontSize:12,fontWeight:700,color:"#666",marginBottom:12}}>
+                일별 식사 내역 <span style={{fontSize:10,background:"#FFF4E6",color:"#D95D39",padding:"2px 6px",borderRadius:8,fontWeight:700,marginLeft:4}}>{(monthData.entries||[]).length}건</span>
+              </div>
+              {(monthData.entries||[]).length===0 ? (
+                <div style={{textAlign:"center",color:"#ccc",padding:"20px 0",fontSize:12}}>이번 달 기록이 없습니다</div>
+              ) : (
+                <div style={{minWidth:members.length*75+200}}>
+                  <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+                    <thead>
+                      <tr style={{borderBottom:"2px solid #E8E4DD"}}>
+                        <th style={{textAlign:"left",padding:"8px 4px",color:"#999",fontWeight:600,width:60}}>날짜</th>
+                        <th style={{textAlign:"left",padding:"8px 4px",color:"#999",fontWeight:600,minWidth:100}}>메뉴</th>
+                        {members.map((m,i)=><th key={m} style={{textAlign:"right",padding:"8px 4px",color:mc(members,i),fontWeight:700,width:65,whiteSpace:"nowrap"}}>{m}</th>)}
+                        <th style={{textAlign:"right",padding:"8px 4px",color:"#999",fontWeight:600,width:65}}>합계</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(monthData.entries||[]).map((entry,idx)=>{
+                        const rowTotal=members.reduce((s,m)=>s+(entry.amounts?.[m]||0)+(entry.coffeeAmounts?.[m]||0),0);
+                        return (
+                          <tr key={idx} style={{borderBottom:"1px solid #F5F3EE"}}>
+                            <td style={{padding:"8px 4px",color:"#666"}}>{entry.date}</td>
+                            <td style={{padding:"8px 4px"}}>
+                              <span style={{fontWeight:600}}>{buildMenuLabel(entry)}</span>
+                              <div style={{display:"flex",gap:3,marginTop:2}}>
+                                {entry.isDelivery&&<span style={{fontSize:9,padding:"1px 5px",borderRadius:4,background:"#E7F5FF",color:"#1B7CA3",fontWeight:700}}>계좌이체</span>}
+                                {entry.hasCoffee&&<span style={{fontSize:9,padding:"1px 5px",borderRadius:4,background:"#FFF8E1",color:"#8B6914",fontWeight:700}}>☕ 커피</span>}
+                              </div>
+                            </td>
+                            {members.map(m=>{
+                              const meal=entry.amounts?.[m]||0,coffee=entry.coffeeAmounts?.[m]||0,tot=meal+coffee;
+                              return (
+                                <td key={m} style={{textAlign:"right",padding:"8px 4px"}}>
+                                  <span style={{color:tot?"#1A1A1A":"#ddd"}}>{tot?fmt(tot):"-"}</span>
+                                  {coffee>0&&<div style={{fontSize:9,color:"#8B6914",marginTop:1}}>☕{fmt(coffee)}</div>}
+                                </td>
+                              );
+                            })}
+                            <td style={{textAlign:"right",padding:"8px 4px",fontWeight:700,color:"#D95D39"}}>{rowTotal>0?fmt(rowTotal):"-"}</td>
+                          </tr>
+                        );
+                      })}
+                      <tr style={{borderTop:"2px solid #1C1C1C"}}>
+                        <td style={{padding:"8px 4px",fontWeight:800}} colSpan={2}>사용 합계</td>
+                        {members.map((m,i)=><td key={m} style={{textAlign:"right",padding:"8px 4px",fontWeight:800,color:mc(members,i)}}>{fmt(spent[m]||0)}</td>)}
+                        <td style={{textAlign:"right",padding:"8px 4px",fontWeight:800,color:"#D95D39"}}>{fmt(totalSpentAll)}</td>
+                      </tr>
+                      <tr style={{background:"#FFFBF5"}}>
+                        <td style={{padding:"8px 4px",fontWeight:800}} colSpan={2}>개인별 잔액</td>
+                        {members.map((m,i)=><td key={m} style={{textAlign:"right",padding:"8px 4px",fontWeight:800,fontSize:13,color:(balance[m]||0)<20000?"#C92A2A":mc(members,i)}}>{fmt(balance[m]||0)}</td>)}
+                        <td style={{textAlign:"right",padding:"8px 4px",fontWeight:800,color:"#3A8F60",fontSize:13}}>{fmt(totalBalanceAll)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+              <div style={{background:"#fff",borderRadius:10,padding:14,boxShadow:"0 1px 3px rgba(0,0,0,.05)",fontSize:11,color:"#999",lineHeight:1.9}}>
+                <div style={{fontWeight:700,color:"#666",marginBottom:4}}>안내</div>
+                <div>• 데이터는 실시간으로 자동 반영됩니다</div>
+                <div>• 잔액 20,000원 미만 시 <b style={{color:"#C92A2A"}}>빨간색</b> 표시</div>
+                <div>• 충전은 계좌로 관리자에게 이체해주세요</div>
+                <div>• 수정은 관리자만 가능합니다</div>
+              </div>
+              <div style={{background:"#fff",borderRadius:10,padding:14,boxShadow:"0 1px 3px rgba(0,0,0,.05)",fontSize:11,minWidth:0}}>
+                <div style={{fontWeight:700,color:"#666",marginBottom:8}}>📅 월말기준 잔액</div>
+                {Object.keys(monthlyBalance).length===0 ? (
+                  <div style={{textAlign:"center",color:"#ccc",fontSize:11,padding:"12px 0"}}>아직 입력된 내역이 없습니다</div>
+                ) : (
+                  <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                    {MONTHS.filter(m=>monthlyBalance[m]).map(m=>{
+                      const row=monthlyBalance[m];
+                      return (
+                        <div key={m} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",background:"#FAFAF8",borderRadius:8,border:"1px solid #F0EDE8"}}>
+                          <div style={{fontWeight:800,color:"#555",fontSize:12,width:26,flexShrink:0}}>{m}</div>
+                          <div style={{flex:1,display:"flex",gap:10}}>
+                            <div style={{flex:1}}>
+                              <div style={{fontSize:9,color:"#aaa",fontWeight:600,marginBottom:1}}>e바구페이</div>
+                              <div style={{fontSize:13,fontWeight:800,color:"#1B7CA3"}}>{fmt(row.epay||0)}<span style={{fontSize:9,color:"#aaa",fontWeight:400}}>원</span></div>
+                            </div>
+                            <div style={{flex:1}}>
+                              <div style={{fontSize:9,color:"#aaa",fontWeight:600,marginBottom:1}}>계좌</div>
+                              <div style={{fontSize:13,fontWeight:800,color:"#3A8F60"}}>{fmt(row.account||0)}<span style={{fontSize:9,color:"#aaa",fontWeight:400}}>원</span></div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

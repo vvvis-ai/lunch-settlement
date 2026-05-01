@@ -1,0 +1,698 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>팀 점심 정산 [관리자]</title>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/pretendard/1.3.9/static/pretendard.min.css" rel="stylesheet"/>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getDatabase, ref, onValue, set, update } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+    const firebaseConfig = {
+      apiKey: "AIzaSyAW40r7bKqVyysdIH1zm6hYYvdGNFrT0r8",
+      authDomain: "lunch-settlement.firebaseapp.com",
+      databaseURL: "https://lunch-settlement-default-rtdb.asia-southeast1.firebasedatabase.app",
+      projectId: "lunch-settlement",
+      storageBucket: "lunch-settlement.firebasestorage.app",
+      messagingSenderId: "570182735488",
+      appId: "1:570182735488:web:266706c6fc98a096613865"
+    };
+    const app = initializeApp(firebaseConfig);
+    const db = getDatabase(app);
+    window.__db = db;
+    window.__dbRef = ref;
+    window.__dbSet = set;
+    window.__dbUpdate = update;
+    onValue(ref(db, "lunchData"), (snap) => {
+      window.__fbData = snap.val() || {};
+      window.dispatchEvent(new Event("fbDataUpdated"));
+    });
+  </script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #F5F3EE; }
+    ::-webkit-scrollbar { display: none; }
+    * { scrollbar-width: none; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useCallback, useRef } = React;
+
+    const DEFAULT_MEMBERS = ["신봉일", "이시정", "전영옥", "안태욱"];
+    const ACCOUNT_INFO = "토스뱅크 1000-6704-2292 안태욱";
+    const ADMIN_PASSWORD = "4081"; // ← 여기서 비밀번호 변경
+    const PALETTE = ["#D95D39","#1B7CA3","#3A8F60","#7B4BB2","#C2255C","#E67700","#0B7285","#5C940D","#862E9C","#364FC7"];
+    const MONTHS = Array.from({ length: 12 }, (_, i) => `${i + 1}월`);
+
+    function fmt(n) { return n === 0 ? "0" : (n?.toLocaleString("ko-KR") ?? ""); }
+    function mc(members, i) { return PALETTE[i % PALETTE.length]; }
+    function calcBalance(data, members) {
+      const spent = members.reduce((o,m)=>({...o,[m]:0}),{});
+      (data.entries||[]).forEach(e => { members.forEach(m => { spent[m] += (e.amounts?.[m]||0)+(e.coffeeAmounts?.[m]||0); }); });
+      const total={}, balance={};
+      members.forEach(m => {
+        const chargeVal = data.charges?.[m];
+        const chargeAmt = typeof chargeVal === "object" ? (chargeVal?.amount||0) : (chargeVal||0);
+        total[m]=(data.prevBalance?.[m]||0)+chargeAmt; balance[m]=total[m]-spent[m];
+      });
+      return { spent, total, balance };
+    }
+    function getChargeAmount(charges, m) {
+      const v = charges?.[m];
+      return typeof v === "object" ? (v?.amount||0) : (v||0);
+    }
+    function getChargeDate(charges, m) {
+      const v = charges?.[m];
+      return typeof v === "object" ? (v?.date||"") : "";
+    }
+    function buildMenuLabel(entry) {
+      let l = entry.menu||"";
+      if (entry.isDelivery && entry.hasCoffee) l+="(배달)+커피";
+      else if (entry.isDelivery) l+="(배달)";
+      else if (entry.hasCoffee) l+="+커피";
+      return l;
+    }
+
+    // Firebase 저장 헬퍼
+    async function fbSet(path, value) {
+      await window.__dbSet(window.__dbRef(window.__db, path), value);
+    }
+
+    function NumberInput({ value, onChange, placeholder, style }) {
+      const [text, setText] = useState(value ? String(value) : "");
+      const ref = useRef(null);
+      useEffect(() => { if (document.activeElement !== ref.current) setText(value ? String(value) : ""); }, [value]);
+      return <input ref={ref} type="text" inputMode="numeric" style={style} placeholder={placeholder||"0"} value={text}
+        onChange={e => { const v=e.target.value.replace(/[^0-9]/g,""); setText(v); onChange(v===""?0:parseInt(v,10)); }}
+        onFocus={e => e.target.select()} />;
+    }
+
+    function Toggle({ on, onClick, label, color }) {
+      return (
+        <button onClick={onClick} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:8,border:`1.5px solid ${on?color:"#ddd"}`,background:on?(color+"12"):"#fff",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",color:on?color:"#999",transition:"all .15s"}}>
+          <span style={{width:16,height:16,borderRadius:4,border:`1.5px solid ${on?color:"#ccc"}`,background:on?color:"#fff",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:10,color:"#fff",transition:"all .15s"}}>{on?"✓":""}</span>
+          {label}
+        </button>
+      );
+    }
+
+    function Modal({ show, onClose, children }) {
+      if (!show) return null;
+      return (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:100,padding:20}} onClick={onClose}>
+          <div style={{background:"#fff",borderRadius:14,padding:24,width:"100%",maxWidth:400,boxShadow:"0 8px 30px rgba(0,0,0,.15)",maxHeight:"85vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+            {children}
+          </div>
+        </div>
+      );
+    }
+
+    function BottomSheet({ show, onClose, children }) {
+      if (!show) return null;
+      return (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.55)",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:100}} onClick={onClose}>
+          <div style={{background:"#fff",borderRadius:"18px 18px 0 0",padding:"24px 20px 32px",width:"100%",maxWidth:480,boxShadow:"0 -4px 30px rgba(0,0,0,.15)",maxHeight:"90vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+            <div style={{width:36,height:4,borderRadius:2,background:"#ddd",margin:"0 auto 16px"}} />
+            {children}
+          </div>
+        </div>
+      );
+    }
+
+    const inputSm = {width:60,padding:"4px 6px",border:"1px solid #ddd",borderRadius:6,fontSize:12,fontFamily:"inherit",textAlign:"right"};
+
+    // ===== 로그인 화면 =====
+    function LoginScreen({ onLogin }) {
+      const [pw, setPw] = useState("");
+      const [err, setErr] = useState(false);
+      const tryLogin = () => {
+        if (pw === ADMIN_PASSWORD) { onLogin(); }
+        else { setErr(true); setPw(""); setTimeout(()=>setErr(false),2000); }
+      };
+      return (
+        <div style={{minHeight:"100vh",background:"#1C1C1C",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+          <div style={{background:"#fff",borderRadius:16,padding:32,width:"100%",maxWidth:340,boxShadow:"0 20px 60px rgba(0,0,0,.4)"}}>
+            <div style={{textAlign:"center",marginBottom:24}}>
+              <div style={{fontSize:36,marginBottom:8}}>🔐</div>
+              <div style={{fontSize:18,fontWeight:800,color:"#1C1C1C"}}>관리자 로그인</div>
+              <div style={{fontSize:12,color:"#999",marginTop:4}}>팀 점심 정산 관리자 페이지</div>
+            </div>
+            <input type="password" value={pw} onChange={e=>setPw(e.target.value)}
+              onKeyDown={e=>e.key==="Enter"&&tryLogin()}
+              placeholder="비밀번호 입력"
+              style={{width:"100%",padding:"12px 16px",border:`1.5px solid ${err?"#C92A2A":"#ddd"}`,borderRadius:10,fontSize:15,fontFamily:"inherit",marginBottom:8,outline:"none",transition:"border .2s"}} />
+            {err && <div style={{fontSize:12,color:"#C92A2A",marginBottom:8,textAlign:"center"}}>비밀번호가 틀렸습니다</div>}
+            <button onClick={tryLogin} style={{width:"100%",padding:13,border:"none",borderRadius:10,background:"#1C1C1C",color:"#fff",fontSize:15,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+              로그인
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // ===== 월말기준 잔액 패널 (관리자용) =====
+    function MonthlyBalancePanel({ monthlyBalance, onSave }) {
+      const [editingMonth, setEditingMonth] = useState(null);
+      const [draft, setDraft] = useState({ epay: 0, account: 0 });
+      const labelStyle = { fontSize:11, color:"#888", fontWeight:600, marginBottom:2 };
+
+      const openEdit = (m) => {
+        const existing = monthlyBalance[m] || { epay:0, account:0 };
+        setDraft({ epay: existing.epay||0, account: existing.account||0 });
+        setEditingMonth(m);
+      };
+      const saveEdit = () => { onSave(editingMonth, draft); setEditingMonth(null); };
+      const deleteMonth = (m) => { onSave(m, null); if(editingMonth===m) setEditingMonth(null); };
+
+      return (
+        <div style={{background:"#fff",borderRadius:10,padding:14,boxShadow:"0 1px 3px rgba(0,0,0,.05)",fontSize:11,minWidth:0}}>
+          <div style={{fontWeight:700,color:"#666",marginBottom:8}}>📅 월말기준 잔액</div>
+          <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:10}}>
+            {MONTHS.map(m=>(
+              <button key={m} onClick={()=>openEdit(m)} style={{padding:"3px 7px",border:`1px solid ${editingMonth===m?"#1B7CA3":monthlyBalance[m]?"#3A8F60":"#ddd"}`,borderRadius:6,background:editingMonth===m?"#E7F5FF":monthlyBalance[m]?"#F0FAF4":"#FAFAF8",color:editingMonth===m?"#1B7CA3":monthlyBalance[m]?"#3A8F60":"#bbb",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>{m}</button>
+            ))}
+          </div>
+          {editingMonth && (
+            <div style={{background:"#F8F9FA",borderRadius:8,padding:"10px 12px",marginBottom:10}}>
+              <div style={{fontWeight:800,color:"#444",fontSize:12,marginBottom:10}}>{editingMonth}</div>
+              <div style={{display:"flex",gap:10,marginBottom:10}}>
+                <div style={{flex:1}}>
+                  <div style={labelStyle}>e바구페이</div>
+                  <NumberInput value={draft.epay} onChange={v=>setDraft(p=>({...p,epay:v}))} style={{width:"100%",padding:"7px 10px",border:"1.5px solid #ddd",borderRadius:7,fontSize:13,fontFamily:"inherit",textAlign:"right"}} />
+                </div>
+                <div style={{flex:1}}>
+                  <div style={labelStyle}>계좌</div>
+                  <NumberInput value={draft.account} onChange={v=>setDraft(p=>({...p,account:v}))} style={{width:"100%",padding:"7px 10px",border:"1.5px solid #ddd",borderRadius:7,fontSize:13,fontFamily:"inherit",textAlign:"right"}} />
+                </div>
+              </div>
+              <div style={{display:"flex",gap:6}}>
+                <button onClick={()=>setEditingMonth(null)} style={{flex:1,padding:"6px",border:"1px solid #ddd",borderRadius:7,background:"#fff",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit",color:"#999"}}>취소</button>
+                <button onClick={saveEdit} style={{flex:2,padding:"6px",border:"none",borderRadius:7,background:"#1B7CA3",color:"#fff",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>저장</button>
+              </div>
+            </div>
+          )}
+          {Object.keys(monthlyBalance).filter(m=>m!==editingMonth).length===0 && !editingMonth && (
+            <div style={{textAlign:"center",color:"#ccc",fontSize:11,padding:"12px 0"}}>월을 선택해 잔액을 입력하세요</div>
+          )}
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+            {MONTHS.filter(m=>monthlyBalance[m]&&m!==editingMonth).map(m=>{
+              const row=monthlyBalance[m];
+              return (
+                <div key={m} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",background:"#FAFAF8",borderRadius:8,border:"1px solid #F0EDE8"}}>
+                  <div style={{fontWeight:800,color:"#555",fontSize:12,width:26,flexShrink:0}}>{m}</div>
+                  <div style={{flex:1,display:"flex",gap:10}}>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:9,color:"#aaa",fontWeight:600,marginBottom:1}}>e바구페이</div>
+                      <div style={{fontSize:13,fontWeight:800,color:"#1B7CA3"}}>{fmt(row.epay||0)}<span style={{fontSize:9,color:"#aaa",fontWeight:400}}>원</span></div>
+                    </div>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:9,color:"#aaa",fontWeight:600,marginBottom:1}}>계좌</div>
+                      <div style={{fontSize:13,fontWeight:800,color:"#3A8F60"}}>{fmt(row.account||0)}<span style={{fontSize:9,color:"#aaa",fontWeight:400}}>원</span></div>
+                    </div>
+                  </div>
+                  <div style={{display:"flex",gap:4,flexShrink:0}}>
+                    <button onClick={()=>openEdit(m)} style={{border:"none",background:"none",color:"#1B7CA3",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit",padding:"2px 4px"}}>수정</button>
+                    <button onClick={()=>deleteMonth(m)} style={{border:"none",background:"none",color:"#C92A2A",fontSize:12,cursor:"pointer",padding:"2px 4px"}}>✕</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      );
+    }
+
+    // ===== 메인 앱 =====
+    function App() {
+      const [authed, setAuthed] = useState(sessionStorage.getItem("lunchAdmin")==="1");
+      const [fbData, setFbData] = useState(window.__fbData || {});
+      const [month, setMonth] = useState(`${new Date().getMonth()+1}월`);
+      const [loading, setLoading] = useState(!window.__fbData);
+      const [showAddModal, setShowAddModal] = useState(false);
+      const [editIdx, setEditIdx] = useState(-1);
+      const [showChargeModal, setShowChargeModal] = useState(false);
+      const [tempCharges, setTempCharges] = useState({});
+      const [tempChargeDates, setTempChargeDates] = useState({});
+      const [showPrevModal, setShowPrevModal] = useState(false);
+      const [tempPrev, setTempPrev] = useState({});
+      const [showMemberModal, setShowMemberModal] = useState(false);
+      const [memberDraft, setMemberDraft] = useState([]);
+      const [newMemberName, setNewMemberName] = useState("");
+      const [editMemberIdx, setEditMemberIdx] = useState(-1);
+      const [editMemberName, setEditMemberName] = useState("");
+      const [newDate, setNewDate] = useState("");
+      const [newMenu, setNewMenu] = useState("");
+      const [newAmounts, setNewAmounts] = useState({});
+      const [newHasCoffee, setNewHasCoffee] = useState(false);
+      const [newCoffeeAmounts, setNewCoffeeAmounts] = useState({});
+      const [newIsDelivery, setNewIsDelivery] = useState(false);
+
+      useEffect(() => {
+        const handler = () => { setFbData({...window.__fbData}); setLoading(false); };
+        window.addEventListener("fbDataUpdated", handler);
+        return () => window.removeEventListener("fbDataUpdated", handler);
+      }, []);
+
+      const handleLogin = () => { sessionStorage.setItem("lunchAdmin","1"); setAuthed(true); };
+
+      if (!authed) return <LoginScreen onLogin={handleLogin} />;
+      if (loading) return (
+        <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#F5F3EE",flexDirection:"column",gap:12}}>
+          <div style={{fontSize:28}}>🍽️</div>
+          <div style={{fontSize:14,color:"#999",fontWeight:600}}>데이터 불러오는 중...</div>
+        </div>
+      );
+
+      const members = fbData.members || DEFAULT_MEMBERS;
+      const monthData = fbData.months?.[month] || { charges: members.reduce((o,m)=>({...o,[m]:0}),{}), prevBalance: members.reduce((o,m)=>({...o,[m]:0}),{}), entries: [] };
+      const monthlyBalance = fbData.monthlyBalance || {};
+      const { spent, total, balance } = calcBalance(monthData, members);
+      const totalSpentAll = members.reduce((s,m)=>s+(spent[m]||0),0);
+      const totalBalanceAll = members.reduce((s,m)=>s+(balance[m]||0),0);
+
+      // Firebase 저장 함수들
+      const persistMonth = async (next) => {
+        const nextFb = { ...fbData, months: { ...(fbData.months||{}), [month]: next } };
+        setFbData(nextFb);
+        await fbSet("lunchData", nextFb);
+      };
+
+      const addEntry = async () => {
+        if (!newDate||!newMenu) return;
+        const entry = { date:newDate, menu:newMenu, amounts:{...newAmounts}, hasCoffee:newHasCoffee, coffeeAmounts:newHasCoffee?{...newCoffeeAmounts}:{}, isDelivery:newIsDelivery };
+        await persistMonth({...monthData, entries:[...(monthData.entries||[]),entry]});
+        setNewDate(""); setNewMenu(""); setNewAmounts(members.reduce((o,m)=>({...o,[m]:0}),{}));
+        setNewHasCoffee(false); setNewCoffeeAmounts(members.reduce((o,m)=>({...o,[m]:0}),{})); setNewIsDelivery(false);
+        setShowAddModal(false);
+      };
+
+      const updateEntry = async (idx,field,member,val) => {
+        const entries = (monthData.entries||[]).map((e,i) => {
+          if (i!==idx) return e;
+          if (field==="amounts") return {...e,amounts:{...e.amounts,[member]:val}};
+          if (field==="coffeeAmounts") return {...e,coffeeAmounts:{...(e.coffeeAmounts||{}),[member]:val}};
+          return {...e,[field]:val};
+        });
+        await persistMonth({...monthData,entries});
+      };
+
+      const deleteEntry = async (idx) => {
+        await persistMonth({...monthData,entries:(monthData.entries||[]).filter((_,i)=>i!==idx)});
+        setEditIdx(-1);
+      };
+
+      const saveMonthlyBalance = async (m, val) => {
+        const next = { ...fbData };
+        if (!next.monthlyBalance) next.monthlyBalance = {};
+        if (val === null) { delete next.monthlyBalance[m]; }
+        else { next.monthlyBalance[m] = val; }
+        setFbData({...next});
+        await fbSet("lunchData", next);
+      };
+
+      const openMemberModal = () => { setMemberDraft([...members]); setNewMemberName(""); setEditMemberIdx(-1); setShowMemberModal(true); };
+      const addMember = () => { const n=newMemberName.trim(); if(!n||memberDraft.includes(n))return; setMemberDraft([...memberDraft,n]); setNewMemberName(""); };
+      const removeMember = (idx) => { setMemberDraft(memberDraft.filter((_,i)=>i!==idx)); if(editMemberIdx===idx)setEditMemberIdx(-1); };
+      const confirmEditMember = () => {
+        const n=editMemberName.trim(); if(!n)return;
+        const updated=[...memberDraft]; updated[editMemberIdx]=n;
+        setMemberDraft(updated); setEditMemberIdx(-1); setEditMemberName("");
+      };
+      const saveMemberChanges = async () => {
+        const next = {...fbData, members: memberDraft};
+        setFbData(next);
+        await fbSet("lunchData", next);
+        setShowMemberModal(false);
+      };
+
+      const resetAdd = () => {
+        setNewDate(""); setNewMenu("");
+        setNewAmounts(members.reduce((o,m)=>({...o,[m]:0}),{}));
+        setNewHasCoffee(false); setNewCoffeeAmounts(members.reduce((o,m)=>({...o,[m]:0}),{})); setNewIsDelivery(false);
+      };
+
+      return (
+        <div style={{minHeight:"100vh",background:"#F5F3EE",fontFamily:"'Pretendard',-apple-system,sans-serif"}}>
+
+          {/* Header */}
+          <div style={{background:"linear-gradient(145deg,#1C1C1C,#2E2E2E)",color:"#fff",padding:"24px 20px 16px",position:"sticky",top:0,zIndex:50}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div>
+                <div style={{fontSize:20,fontWeight:800,letterSpacing:-0.5}}>🍽️ 팀 점심 정산</div>
+                <div style={{fontSize:11,color:"rgba(255,255,255,.45)",marginTop:2}}>충전 → {ACCOUNT_INFO}</div>
+              </div>
+              <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                <span style={{fontSize:10,color:"rgba(255,255,255,.4)",border:"1px solid rgba(255,255,255,.2)",borderRadius:6,padding:"3px 8px"}}>🔑 관리자</span>
+                <button onClick={openMemberModal} style={{padding:"6px 10px",border:"1px solid rgba(255,255,255,.2)",borderRadius:8,background:"rgba(255,255,255,.08)",color:"rgba(255,255,255,.7)",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>👥 부서원 관리</button>
+              </div>
+            </div>
+          </div>
+
+          {/* Month Tabs */}
+          <div style={{display:"flex",gap:4,padding:"12px 12px 0",overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
+            {MONTHS.map(m=>(
+              <button key={m} onClick={()=>setMonth(m)} style={{padding:"7px 14px",border:"none",borderRadius:18,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap",flexShrink:0,background:m===month?"#1C1C1C":"#fff",color:m===month?"#fff":"#999",boxShadow:m===month?"0 2px 8px rgba(0,0,0,.15)":"0 1px 2px rgba(0,0,0,.05)"}}>{m}</button>
+            ))}
+          </div>
+
+          <div style={{padding:"12px 12px 120px",maxWidth:780,margin:"0 auto"}}>
+
+            {/* Balance Cards */}
+            <div style={{display:"grid",gridTemplateColumns:`repeat(${Math.min(members.length,4)},1fr)`,gap:6,marginBottom:12}}>
+              {members.map((m,i)=>(
+                <div key={m} style={{background:"#fff",borderRadius:10,padding:"12px 8px",boxShadow:"0 1px 3px rgba(0,0,0,.05)",textAlign:"center",borderTop:`3px solid ${mc(members,i)}`}}>
+                  <div style={{fontSize:12,fontWeight:700,color:mc(members,i),whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{m}</div>
+                  <div style={{fontSize:16,fontWeight:800,marginTop:5,letterSpacing:-0.5,color:(balance[m]||0)<20000?"#C92A2A":"#1A1A1A"}}>{fmt(balance[m]||0)}</div>
+                  <div style={{fontSize:10,color:"#999",marginTop:2}}>잔액</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Totals */}
+            <div style={{display:"flex",gap:6,marginBottom:16}}>
+              <div style={{flex:1,background:"#fff",borderRadius:10,padding:"10px 14px",boxShadow:"0 1px 3px rgba(0,0,0,.05)",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span style={{fontSize:11,color:"#999",fontWeight:600}}>총 사용</span>
+                <span style={{fontSize:15,fontWeight:800,color:"#D95D39"}}>{fmt(totalSpentAll)}원</span>
+              </div>
+              <div style={{flex:1,background:"#fff",borderRadius:10,padding:"10px 14px",boxShadow:"0 1px 3px rgba(0,0,0,.05)",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span style={{fontSize:11,color:"#999",fontWeight:600}}>총 잔액</span>
+                <span style={{fontSize:15,fontWeight:800,color:"#3A8F60"}}>{fmt(totalBalanceAll)}원</span>
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div style={{display:"flex",gap:6,marginBottom:16}}>
+              <button onClick={()=>{setTempPrev({...monthData.prevBalance});setShowPrevModal(true);}} style={{flex:1,padding:"10px",border:"1.5px dashed #ccc",borderRadius:10,background:"#fff",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit",color:"#666"}}>📋 이전 이월금</button>
+              <button onClick={()=>{
+                const amounts={}, dates={};
+                members.forEach(m=>{ 
+                  amounts[m] = monthData.charges?.[m]?.amount ?? monthData.charges?.[m] ?? 0;
+                  dates[m] = monthData.charges?.[m]?.date ?? "";
+                });
+                setTempCharges(amounts); setTempChargeDates(dates); setShowChargeModal(true);
+              }} style={{flex:1,padding:"10px",border:"1.5px dashed #D95D39",borderRadius:10,background:"#FFF8F5",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit",color:"#D95D39"}}>💰 충전금 입력</button>
+            </div>
+
+            {/* Summary Table */}
+            <div style={{background:"#fff",borderRadius:10,padding:14,marginBottom:16,boxShadow:"0 1px 3px rgba(0,0,0,.05)",overflowX:"auto"}}>
+              <div style={{fontSize:12,fontWeight:700,marginBottom:10,color:"#666"}}>{month} 정산 요약</div>
+              <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,minWidth:members.length*80+120}}>
+                <thead>
+                  <tr style={{borderBottom:"2px solid #E8E4DD"}}>
+                    <th style={{textAlign:"left",padding:"6px 4px",color:"#999",fontWeight:600,whiteSpace:"nowrap"}}>구분</th>
+                    {members.map((m,i)=><th key={m} style={{textAlign:"right",padding:"6px 4px",color:mc(members,i),fontWeight:700,whiteSpace:"nowrap"}}>{m}</th>)}
+                    <th style={{textAlign:"right",padding:"6px 4px",color:"#999",fontWeight:600}}>합계</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    {label:"이전잔액",vals:monthData.prevBalance||{},color:"#999"},
+                    {label:"충전",vals:monthData.charges||{},color:"#D95D39",isCharge:true},
+                    {label:"사용가능",vals:total,color:"#1B7CA3"},
+                    {label:"사용",vals:spent,color:"#999"},
+                  ].map(row=>(
+                    <tr key={row.label} style={{borderBottom:"1px solid #F1F0ED"}}>
+                      <td style={{padding:"6px 4px",color:row.color,whiteSpace:"nowrap"}}>{row.label}</td>
+                      {members.map(m=>(
+                        <td key={m} style={{textAlign:"right",padding:"6px 4px",color:row.color==="#D95D39"?row.color:undefined}}>
+                          {row.isCharge ? (
+                            <div>
+                              <div>{fmt(getChargeAmount(row.vals,m))}</div>
+                              {getChargeDate(row.vals,m)&&<div style={{fontSize:9,color:"#F08060",marginTop:1}}>{getChargeDate(row.vals,m)}</div>}
+                            </div>
+                          ) : fmt(row.vals[m]||0)}
+                        </td>
+                      ))}
+                      <td style={{textAlign:"right",padding:"6px 4px",fontWeight:600,color:row.color==="#D95D39"?row.color:undefined}}>
+                        {row.isCharge ? fmt(members.reduce((s,m)=>s+getChargeAmount(row.vals,m),0)) : fmt(members.reduce((s,m)=>s+(row.vals[m]||0),0))}
+                      </td>
+                    </tr>
+                  ))}
+                  <tr>
+                    <td style={{padding:"6px 4px",fontWeight:800}}>잔액</td>
+                    {members.map((m,i)=><td key={m} style={{textAlign:"right",padding:"6px 4px",fontWeight:800,color:(balance[m]||0)<20000?"#C92A2A":mc(members,i)}}>{fmt(balance[m]||0)}</td>)}
+                    <td style={{textAlign:"right",padding:"6px 4px",fontWeight:800,color:"#3A8F60"}}>{fmt(totalBalanceAll)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            {/* Daily Records Table */}
+            <div style={{background:"#fff",borderRadius:10,padding:14,marginBottom:16,boxShadow:"0 1px 3px rgba(0,0,0,.05)",overflowX:"auto"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+                <div style={{fontSize:12,fontWeight:700,color:"#666"}}>
+                  일별 식사 내역 <span style={{fontSize:10,background:"#FFF4E6",color:"#D95D39",padding:"2px 6px",borderRadius:8,fontWeight:700,marginLeft:4}}>{(monthData.entries||[]).length}건</span>
+                </div>
+                <button onClick={()=>{resetAdd();setShowAddModal(true);}} style={{padding:"6px 12px",border:"none",borderRadius:8,background:"#1C1C1C",color:"#fff",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>+ 추가</button>
+              </div>
+              <div style={{minWidth:members.length*75+200}}>
+                <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+                  <thead>
+                    <tr style={{borderBottom:"2px solid #E8E4DD"}}>
+                      <th style={{textAlign:"left",padding:"8px 4px",color:"#999",fontWeight:600,width:60}}>날짜</th>
+                      <th style={{textAlign:"left",padding:"8px 4px",color:"#999",fontWeight:600,minWidth:100}}>메뉴</th>
+                      {members.map((m,i)=><th key={m} style={{textAlign:"right",padding:"8px 4px",color:mc(members,i),fontWeight:700,width:65,whiteSpace:"nowrap"}}>{m}</th>)}
+                      <th style={{textAlign:"right",padding:"8px 4px",color:"#999",fontWeight:600,width:65}}>합계</th>
+                      <th style={{width:30}}></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(monthData.entries||[]).map((entry,idx)=>{
+                      const rowTotal=members.reduce((s,m)=>s+(entry.amounts?.[m]||0)+(entry.coffeeAmounts?.[m]||0),0);
+                      const isEd=editIdx===idx;
+                      return (
+                        <tr key={idx} style={{borderBottom:"1px solid #F5F3EE",background:isEd?"#FFFBF5":"transparent",transition:"background .15s"}} onClick={()=>setEditIdx(isEd?-1:idx)}>
+                          <td style={{padding:"8px 4px"}}>
+                            {isEd?<input type="text" value={entry.date} onClick={e=>e.stopPropagation()} onChange={e=>updateEntry(idx,"date",null,e.target.value)} style={{width:55,padding:"4px 6px",border:"1px solid #ddd",borderRadius:6,fontSize:12,fontFamily:"inherit"}} />:<span style={{color:"#666"}}>{entry.date}</span>}
+                          </td>
+                          <td style={{padding:"8px 4px"}}>
+                            {isEd?(
+                              <div onClick={e=>e.stopPropagation()}>
+                                <input type="text" value={entry.menu} onChange={e=>updateEntry(idx,"menu",null,e.target.value)} style={{width:"100%",padding:"4px 6px",border:"1px solid #ddd",borderRadius:6,fontSize:12,fontFamily:"inherit",marginBottom:4}} />
+                                <div style={{display:"flex",gap:4}}>
+                                  <Toggle on={!!entry.hasCoffee} label="☕" color="#8B6914" onClick={()=>updateEntry(idx,"hasCoffee",null,!entry.hasCoffee)} />
+                                  <Toggle on={!!entry.isDelivery} label="🛵" color="#1B7CA3" onClick={()=>updateEntry(idx,"isDelivery",null,!entry.isDelivery)} />
+                                </div>
+                              </div>
+                            ):(
+                              <div>
+                                <span style={{fontWeight:600}}>{buildMenuLabel(entry)}</span>
+                                <div style={{display:"flex",gap:3,marginTop:2}}>
+                                  {entry.isDelivery&&<span style={{fontSize:9,padding:"1px 5px",borderRadius:4,background:"#E7F5FF",color:"#1B7CA3",fontWeight:700}}>계좌이체</span>}
+                                  {entry.hasCoffee&&<span style={{fontSize:9,padding:"1px 5px",borderRadius:4,background:"#FFF8E1",color:"#8B6914",fontWeight:700}}>☕ 커피</span>}
+                                </div>
+                              </div>
+                            )}
+                          </td>
+                          {members.map(m=>{
+                            const meal=entry.amounts?.[m]||0,coffee=entry.coffeeAmounts?.[m]||0,tot=meal+coffee;
+                            return (
+                              <td key={m} style={{textAlign:"right",padding:"8px 4px",verticalAlign:"top"}}>
+                                {isEd?(
+                                  <div onClick={e=>e.stopPropagation()}>
+                                    <NumberInput value={meal} onChange={v=>updateEntry(idx,"amounts",m,v)} style={inputSm} />
+                                    {entry.hasCoffee&&<NumberInput value={coffee} onChange={v=>updateEntry(idx,"coffeeAmounts",m,v)} placeholder="커피" style={{...inputSm,marginTop:3,border:"1px solid #D4C090",background:"#FFFEF7"}} />}
+                                  </div>
+                                ):(
+                                  <div>
+                                    <span style={{color:tot?"#1A1A1A":"#ddd"}}>{tot?fmt(tot):"-"}</span>
+                                    {coffee>0&&<div style={{fontSize:9,color:"#8B6914",marginTop:1}}>☕{fmt(coffee)}</div>}
+                                  </div>
+                                )}
+                              </td>
+                            );
+                          })}
+                          <td style={{textAlign:"right",padding:"8px 4px",fontWeight:700,color:"#D95D39"}}>{rowTotal>0?fmt(rowTotal):"-"}</td>
+                          <td style={{textAlign:"center",padding:"8px 2px"}}>
+                            {isEd&&<button onClick={e=>{e.stopPropagation();deleteEntry(idx);}} style={{border:"none",background:"none",cursor:"pointer",color:"#C92A2A",fontSize:14,padding:2}}>✕</button>}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    <tr style={{borderTop:"2px solid #1C1C1C"}}>
+                      <td style={{padding:"8px 4px",fontWeight:800}} colSpan={2}>사용 합계</td>
+                      {members.map((m,i)=><td key={m} style={{textAlign:"right",padding:"8px 4px",fontWeight:800,color:mc(members,i)}}>{fmt(spent[m]||0)}</td>)}
+                      <td style={{textAlign:"right",padding:"8px 4px",fontWeight:800,color:"#D95D39"}}>{fmt(totalSpentAll)}</td>
+                      <td></td>
+                    </tr>
+                    <tr style={{background:"#FFFBF5"}}>
+                      <td style={{padding:"8px 4px",fontWeight:800}} colSpan={2}>개인별 잔액</td>
+                      {members.map((m,i)=><td key={m} style={{textAlign:"right",padding:"8px 4px",fontWeight:800,fontSize:13,color:(balance[m]||0)<20000?"#C92A2A":mc(members,i)}}>{fmt(balance[m]||0)}</td>)}
+                      <td style={{textAlign:"right",padding:"8px 4px",fontWeight:800,color:"#3A8F60",fontSize:13}}>{fmt(totalBalanceAll)}</td>
+                      <td></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* 사용법 + 월말기준 잔액 */}
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+              <div style={{background:"#fff",borderRadius:10,padding:14,boxShadow:"0 1px 3px rgba(0,0,0,.05)",fontSize:11,color:"#999",lineHeight:1.9}}>
+                <div style={{fontWeight:700,color:"#666",marginBottom:4}}>사용법</div>
+                <div>• <b>+ 추가</b>로 일별 식사 기록 입력 (커피·배달 옵션 선택 가능)</div>
+                <div>• 행 클릭 → 금액 수정·커피/배달 토글·삭제</div>
+                <div>• ☕ 커피 선택 시 개인별 커피 금액 별도 입력</div>
+                <div>• 🛵 배달 선택 시 <b>계좌이체</b> 태그 자동 추가</div>
+                <div>• <b>👥 부서원 관리</b>에서 이름 추가·수정·삭제 가능</div>
+                <div>• 잔액 = 이전잔액 + 충전 − (식사 + 커피) 자동계산</div>
+              </div>
+              <MonthlyBalancePanel monthlyBalance={monthlyBalance} onSave={saveMonthlyBalance} />
+            </div>
+          </div>
+
+          {/* ===== Add Entry BottomSheet ===== */}
+          <BottomSheet show={showAddModal} onClose={()=>setShowAddModal(false)}>
+            <div style={{fontSize:17,fontWeight:800,marginBottom:20}}>🍽️ 식사 기록 추가</div>
+            <div style={{display:"flex",gap:10,marginBottom:16}}>
+              <div style={{flex:"0 0 90px"}}>
+                <label style={{fontSize:11,fontWeight:700,color:"#999",display:"block",marginBottom:4}}>날짜</label>
+                <input type="text" value={newDate} onChange={e=>setNewDate(e.target.value)} placeholder="01/05" style={{width:"100%",padding:"10px 12px",border:"1.5px solid #ddd",borderRadius:8,fontSize:14,fontFamily:"inherit"}} />
+              </div>
+              <div style={{flex:1}}>
+                <label style={{fontSize:11,fontWeight:700,color:"#999",display:"block",marginBottom:4}}>식비명</label>
+                <input type="text" value={newMenu} onChange={e=>setNewMenu(e.target.value)} placeholder="직원 식사" style={{width:"100%",padding:"10px 12px",border:"1.5px solid #ddd",borderRadius:8,fontSize:14,fontFamily:"inherit"}} />
+              </div>
+            </div>
+            <div style={{display:"flex",gap:8,marginBottom:18}}>
+              <Toggle on={newHasCoffee} onClick={()=>setNewHasCoffee(!newHasCoffee)} label="☕ 커피 추가" color="#8B6914" />
+              <Toggle on={newIsDelivery} onClick={()=>setNewIsDelivery(!newIsDelivery)} label="🛵 배달 (계좌이체)" color="#1B7CA3" />
+            </div>
+            <div style={{fontSize:11,fontWeight:700,color:"#999",marginBottom:8}}>개인별 식사 금액</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:newHasCoffee?16:0}}>
+              {members.map((m,i)=>(
+                <div key={m} style={{display:"flex",alignItems:"center",gap:8,background:"#FAFAF8",borderRadius:8,padding:"8px 10px"}}>
+                  <div style={{width:8,height:8,borderRadius:"50%",background:mc(members,i),flexShrink:0}} />
+                  <div style={{flex:1,fontSize:13,fontWeight:600}}>{m}</div>
+                  <NumberInput value={newAmounts[m]||0} onChange={v=>setNewAmounts(p=>({...p,[m]:v}))} style={{width:80,padding:"8px 10px",border:"1.5px solid #ddd",borderRadius:8,fontSize:14,fontFamily:"inherit",textAlign:"right"}} />
+                </div>
+              ))}
+            </div>
+            {newHasCoffee&&(
+              <>
+                <div style={{fontSize:11,fontWeight:700,color:"#8B6914",marginBottom:8}}>☕ 개인별 커피 금액</div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                  {members.map((m,i)=>(
+                    <div key={m} style={{display:"flex",alignItems:"center",gap:8,background:"#FFFEF7",borderRadius:8,padding:"8px 10px",border:"1px solid #F0E8C8"}}>
+                      <div style={{width:8,height:8,borderRadius:"50%",background:mc(members,i),flexShrink:0}} />
+                      <div style={{flex:1,fontSize:13,fontWeight:600}}>{m}</div>
+                      <NumberInput value={newCoffeeAmounts[m]||0} onChange={v=>setNewCoffeeAmounts(p=>({...p,[m]:v}))} style={{width:80,padding:"8px 10px",border:"1.5px solid #D4C090",borderRadius:8,fontSize:14,fontFamily:"inherit",textAlign:"right",background:"#fff"}} />
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+            <div style={{marginTop:18,padding:"12px 14px",background:"#F5F3EE",borderRadius:10}}>
+              <div style={{fontSize:11,color:"#999",fontWeight:600,marginBottom:6}}>미리보기</div>
+              <div style={{fontSize:14,fontWeight:700}}>{newDate||"??/??"} {buildMenuLabel({menu:newMenu||"식비명",hasCoffee:newHasCoffee,isDelivery:newIsDelivery})}</div>
+              <div style={{fontSize:12,color:"#666",marginTop:6}}>합계: <b style={{color:"#D95D39"}}>{fmt(members.reduce((s,m)=>s+(newAmounts[m]||0)+(newHasCoffee?(newCoffeeAmounts[m]||0):0),0))}원</b></div>
+            </div>
+            <div style={{display:"flex",gap:8,marginTop:20}}>
+              <button onClick={()=>setShowAddModal(false)} style={{flex:1,padding:12,border:"1px solid #ddd",borderRadius:10,background:"#fff",fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>취소</button>
+              <button onClick={addEntry} style={{flex:2,padding:12,border:"none",borderRadius:10,background:(!newDate||!newMenu)?"#ccc":"#1C1C1C",color:"#fff",fontSize:14,fontWeight:700,cursor:(!newDate||!newMenu)?"default":"pointer",fontFamily:"inherit"}}>저장</button>
+            </div>
+          </BottomSheet>
+
+          {/* ===== Charge Modal ===== */}
+          <Modal show={showChargeModal} onClose={()=>setShowChargeModal(false)}>
+            <div style={{fontSize:16,fontWeight:800,marginBottom:4}}>💰 {month} 충전금 입력</div>
+            <div style={{fontSize:11,color:"#999",marginBottom:16}}>개인별 충전 금액과 날짜를 입력하세요</div>
+            {members.map((m,i)=>(
+              <div key={m} style={{marginBottom:12,padding:"10px 12px",background:"#FAFAF8",borderRadius:10,border:"1px solid #F0EDE8"}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+                  <div style={{width:8,height:8,borderRadius:"50%",background:mc(members,i),flexShrink:0}} />
+                  <div style={{fontSize:13,fontWeight:700,color:mc(members,i)}}>{m}</div>
+                </div>
+                <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:10,color:"#aaa",fontWeight:600,marginBottom:3}}>날짜</div>
+                    <input type="text" value={tempChargeDates[m]||""} onChange={e=>setTempChargeDates(p=>({...p,[m]:e.target.value}))}
+                      placeholder="05/12"
+                      style={{width:"100%",padding:"8px 10px",border:"1.5px solid #ddd",borderRadius:8,fontSize:13,fontFamily:"inherit"}} />
+                  </div>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:10,color:"#aaa",fontWeight:600,marginBottom:3}}>금액</div>
+                    <div style={{display:"flex",alignItems:"center",gap:4}}>
+                      <NumberInput value={tempCharges[m]||0} onChange={v=>setTempCharges(p=>({...p,[m]:v}))}
+                        style={{width:"100%",padding:"8px 10px",border:"1.5px solid #ddd",borderRadius:8,fontSize:13,fontFamily:"inherit",textAlign:"right"}} />
+                      <span style={{fontSize:12,color:"#999",flexShrink:0}}>원</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+            <div style={{display:"flex",gap:8,marginTop:8}}>
+              <button onClick={()=>setShowChargeModal(false)} style={{flex:1,padding:10,border:"1px solid #ddd",borderRadius:8,background:"#fff",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>취소</button>
+              <button onClick={async()=>{
+                const charges={};
+                members.forEach(m=>{ charges[m]={ amount: tempCharges[m]||0, date: tempChargeDates[m]||"" }; });
+                await persistMonth({...monthData,charges});
+                setShowChargeModal(false);
+              }} style={{flex:1,padding:10,border:"none",borderRadius:8,background:"#D95D39",color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>저장</button>
+            </div>
+          </Modal>
+
+          {/* ===== Prev Balance Modal ===== */}
+          <Modal show={showPrevModal} onClose={()=>setShowPrevModal(false)}>
+            <div style={{fontSize:16,fontWeight:800,marginBottom:4}}>📋 이전 이월금 입력</div>
+            <div style={{fontSize:11,color:"#999",marginBottom:16}}>전 달에서 이월된 개인별 잔액을 입력하세요</div>
+            {members.map((m,i)=>(
+              <div key={m} style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+                <div style={{width:8,height:8,borderRadius:"50%",background:mc(members,i),flexShrink:0}} />
+                <div style={{flex:1,fontSize:13,fontWeight:600}}>{m}</div>
+                <NumberInput value={tempPrev[m]||0} onChange={v=>setTempPrev(p=>({...p,[m]:v}))} style={{width:110,padding:"8px 10px",border:"1.5px solid #ddd",borderRadius:8,fontSize:14,fontFamily:"inherit",textAlign:"right"}} />
+                <span style={{fontSize:12,color:"#999"}}>원</span>
+              </div>
+            ))}
+            <div style={{display:"flex",gap:8,marginTop:20}}>
+              <button onClick={()=>setShowPrevModal(false)} style={{flex:1,padding:10,border:"1px solid #ddd",borderRadius:8,background:"#fff",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>취소</button>
+              <button onClick={async()=>{await persistMonth({...monthData,prevBalance:{...tempPrev}});setShowPrevModal(false);}} style={{flex:1,padding:10,border:"none",borderRadius:8,background:"#1B7CA3",color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>저장</button>
+            </div>
+          </Modal>
+
+          {/* ===== Member Management Modal ===== */}
+          <Modal show={showMemberModal} onClose={()=>setShowMemberModal(false)}>
+            <div style={{fontSize:16,fontWeight:800,marginBottom:4}}>👥 부서원 관리</div>
+            <div style={{fontSize:11,color:"#999",marginBottom:16}}>이름을 추가·수정·삭제할 수 있습니다</div>
+            {memberDraft.map((m,i)=>(
+              <div key={i} style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,padding:"8px 10px",background:"#FAFAF8",borderRadius:8}}>
+                <div style={{width:10,height:10,borderRadius:"50%",background:PALETTE[i%PALETTE.length],flexShrink:0}} />
+                {editMemberIdx===i?(
+                  <>
+                    <input type="text" value={editMemberName} onChange={e=>setEditMemberName(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")confirmEditMember();}} style={{flex:1,padding:"6px 8px",border:"1.5px solid #1B7CA3",borderRadius:6,fontSize:13,fontFamily:"inherit",fontWeight:600}} autoFocus />
+                    <button onClick={confirmEditMember} style={{border:"none",background:"#1B7CA3",color:"#fff",padding:"4px 10px",borderRadius:6,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>확인</button>
+                    <button onClick={()=>setEditMemberIdx(-1)} style={{border:"none",background:"none",color:"#999",fontSize:13,cursor:"pointer",padding:2}}>✕</button>
+                  </>
+                ):(
+                  <>
+                    <div style={{flex:1,fontSize:13,fontWeight:600}}>{m}</div>
+                    <button onClick={()=>{setEditMemberIdx(i);setEditMemberName(memberDraft[i]);}} style={{border:"none",background:"none",color:"#1B7CA3",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",padding:"2px 6px"}}>수정</button>
+                    <button onClick={()=>removeMember(i)} style={{border:"none",background:"none",color:"#C92A2A",fontSize:13,cursor:"pointer",padding:2}}>✕</button>
+                  </>
+                )}
+              </div>
+            ))}
+            <div style={{display:"flex",gap:8,marginTop:12,marginBottom:8}}>
+              <input type="text" value={newMemberName} onChange={e=>setNewMemberName(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")addMember();}} placeholder="새 부서원 이름" style={{flex:1,padding:"8px 12px",border:"1.5px solid #ddd",borderRadius:8,fontSize:13,fontFamily:"inherit"}} />
+              <button onClick={addMember} style={{padding:"8px 14px",border:"none",borderRadius:8,background:newMemberName.trim()?"#3A8F60":"#ccc",color:"#fff",fontSize:12,fontWeight:700,cursor:newMemberName.trim()?"pointer":"default",fontFamily:"inherit"}}>추가</button>
+            </div>
+            {memberDraft.length===0&&<div style={{textAlign:"center",padding:20,color:"#ccc",fontSize:13}}>부서원을 추가해주세요</div>}
+            <div style={{display:"flex",gap:8,marginTop:20}}>
+              <button onClick={()=>setShowMemberModal(false)} style={{flex:1,padding:10,border:"1px solid #ddd",borderRadius:8,background:"#fff",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>취소</button>
+              <button onClick={saveMemberChanges} style={{flex:1,padding:10,border:"none",borderRadius:8,background:"#1C1C1C",color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>저장</button>
+            </div>
+          </Modal>
+
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
