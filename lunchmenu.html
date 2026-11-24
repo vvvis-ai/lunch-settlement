@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>팀 점심 장부</title>
 <style>
 *{box-sizing:border-box}body{margin:0;background:#f6f6ef;color:#183a32;font:16px/1.5 system-ui,sans-serif}main{max-width:830px;margin:auto;padding:26px 18px 60px}header,.bar,.row,.line{display:flex;align-items:center;justify-content:space-between;gap:12px}header{padding-bottom:20px;border-bottom:1px solid #d8dfd6}header strong{font-size:24px;letter-spacing:-1.5px}nav{background:#e5e9df;padding:4px;border-radius:12px;display:flex}button,select,input{font:inherit;color:inherit;border:1px solid #cbd6cb;border-radius:9px;background:white;padding:9px 12px}button{cursor:pointer;font-weight:650}button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid #df9c28}nav button{border:0;background:transparent;font-size:14px}button.active,.primary{background:#165c49;color:white}h1{letter-spacing:-1px;font-size:26px}h2{font-size:18px;margin:0}p{margin:5px 0}.hero{background:#164e41;color:white;border-radius:20px;padding:25px 28px;margin:16px 0}.hero b{font-size:clamp(35px,7vw,52px);letter-spacing:-2px}.hero small{color:#d0ecdd}.badge{background:#ffe3a9;color:#614000;border-radius:8px;padding:3px 8px;font-size:13px}.card{background:white;border:1px solid #dce1d8;border-radius:16px;padding:20px;margin:14px 0}.row{border-top:1px solid #e6e9e2;padding:13px 0}.card h2{margin-bottom:12px}small,.muted{color:#556a60;font-size:14px}.money{font-variant-numeric:tabular-nums;white-space:nowrap}.actions{display:flex;gap:8px;flex-wrap:wrap}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}label.field{display:grid;gap:4px}input{min-width:0;width:100%}input[type=checkbox]{width:18px;height:18px;vertical-align:middle;accent-color:#165c49}summary{cursor:pointer}details{border-top:1px solid #e1e6de;padding:11px 0}details p{padding:8px;color:#52685c}.person{display:grid;grid-template-columns:minmax(72px,1fr) 1.5fr;align-items:center;gap:10px;padding:7px 0}.person label{white-space:nowrap}button:disabled,input:disabled{opacity:.5}footer{margin-top:22px;color:#607369;font-size:13px}#status{color:#126346;font-weight:bold}dialog{max-width:90vw;border:0;border-radius:15px;padding:24px}dialog::backdrop{background:#14342d70}@media(max-width:480px){.card,.hero{padding:16px}.bar{flex-wrap:wrap}header strong{font-size:21px}}
@@ -69,13 +69,13 @@ function switchView(v){view=v;notice('');render()}
 function login(){app.innerHTML='<form class="card" id="loginForm"><h2>관리자 로그인</h2><label class="field">기존 관리자 비밀번호<input name="pass" required type="password" autocomplete="current-password"></label><button class="primary">로그인</button></form>';
  loginForm.onsubmit=e=>{e.preventDefault();if(loginForm.elements.pass.value!==undefined){notice('비밀번호를 확인해 주세요.');return}unlocked=true;notice('');render()}}
 team.onclick=()=>location.href='lunchmenu.html';admin.onclick=()=>location.href='lunchmenu_admin.html';
-function memberTabs(){
- const buttons=names.map((name,i)=>
-  '<button type="button" role="tab" id="member-'+i+'" data-member="'+i+'" aria-selected="'+(i===who)+'" tabindex="'+(i===who?'0':'-1')+'" aria-controls="memberPanel">'+esc(name)+'</button>'
+function memberTabs(activeMembers){
+ const buttons=activeMembers.map(i=>
+  '<button type="button" role="tab" id="member-'+i+'" data-member="'+i+'" aria-selected="'+(i===who)+'" tabindex="'+(i===who?'0':'-1')+'" aria-controls="memberPanel">'+esc(names[i])+'</button>'
  );
  return '<div class="member-tabs" role="tablist" aria-label="조회할 팀원">'+buttons.join('')+'</div>'
 }
-function bindMemberTabs(){
+function bindMemberTabs(activeMembers){
  const tabs=app.querySelector('[role=tablist]');
  function select(index){
   who=index;
@@ -89,15 +89,21 @@ function bindMemberTabs(){
   if(button)select(Number(button.dataset.member))
  };
  tabs.onkeydown=e=>{
-  const index={ArrowLeft:(who+names.length-1)%names.length,ArrowRight:(who+1)%names.length,Home:0,End:names.length-1}[e.key];
-  if(typeof index==='number'){e.preventDefault();select(index)}
+  const position=activeMembers.indexOf(who), count=activeMembers.length;
+  const next={ArrowLeft:(position+count-1)%count,ArrowRight:(position+1)%count,Home:0,End:count-1}[e.key];
+  if(typeof next==='number'){e.preventDefault();select(activeMembers[next])}
  }
 }
 function render(){
  team.className=view==='team'?'active':'';admin.className=view==='admin'?'active':'';
  if(view==='admin'&&!unlocked){login();return}
+ const activeMembers=roster.flatMap((person,i)=>person.active?[i]:[]);
+ if(view==='team'){
+  if(!activeMembers.length){app.innerHTML='<h1>내 점심 장부</h1><p class="card">활동 중인 팀원이 없습니다.</p>';return}
+  if(!activeMembers.includes(who))who=activeMembers[0]
+ }
  const personal=view==='team', recent=records.slice().reverse().filter(r=>r.kind==='입금'&&r.person===who&&r.date.slice(0,7)<=period).sort((a,b)=>b.date.localeCompare(a.date)).at(0);
- app.innerHTML='<div class="bar"><h1>'+(personal?'내 점심 장부':'팀 정산 관리')+'</h1></div>'+(personal?memberTabs():'')+'<label class="monthpick">조회 월 <input type="month" id="periodInput" value="'+period+'"></label>'+
+ app.innerHTML='<div class="bar"><h1>'+(personal?'내 점심 장부':'팀 정산 관리')+'</h1></div>'+(personal?memberTabs(activeMembers):'')+'<label class="monthpick">조회 월 <input type="month" id="periodInput" value="'+period+'"></label>'+
  (personal?'<div role="tabpanel" id="memberPanel" aria-labelledby="member-'+who+'" tabindex="0">':'')+'<section class="hero"><p>'+(personal?esc(names[who]||'팀원')+'님의 점심 잔액':'팀원 선입금 잔액 합계')+'</p><b>'+won(personal?balance(who):names.reduce((a,n,i)=>a+balance(i),0))+'</b> '+(personal&&balance(who)<20000?'<span class="badge">충전 권장</span>':'')+'</section><div class="stats">'+[['전월 이월',opening],['이달 입금',i=>monthly(i,'입금')],['이달 사용',i=>-monthly(i,'식사')]].map(([label,fn])=>'<div><small>'+label+'</small><strong>'+won(personal?fn(who):sum(fn))+'</strong></div>').join('')+'</div>'+
  (personal?'<section class="card"><div class="bar"><div><h2>관리자 입금 계좌</h2><p>'+esc(account)+'</p></div><button id="copy">계좌 복사</button></div><p class="muted">최근 반영된 입금 · '+(recent?recent.date+'　'+won(recent.value):'기록 없음')+'</p></section>':'<div class="actions"><button class="primary" id="mealBtn">오늘 식사 기록</button><button id="depositBtn">입금 기록</button><button id="rosterBtn">팀원 관리</button><button id="checkBtn">월말 검산</button><button id="lockBtn">잠금</button></div><div id="editor"></div>')+
  '<section class="card"><h2>'+(personal?'내 거래 내역':'팀 거래 내역')+'</h2>'+records.map((r,i)=>({r,i})).reverse().sort((a,b)=>b.r.date.localeCompare(a.r.date)).filter(({r})=>r.date.startsWith(period)&&(!personal||impact(r,who))).map(({r,i})=>{
@@ -106,7 +112,7 @@ function render(){
  periodInput.onchange=e=>{if(e.target.value){period=e.target.value;notice('');render()}};
  if(!app.querySelector('details'))app.querySelector('.card:last-child').insertAdjacentHTML('beforeend','<p class="muted">이 달에는 거래가 없습니다.</p>');
  if(!personal)app.insertAdjacentHTML('beforeend','<section class="card"><h2>팀원별 월간 정산</h2><div class="scroll"><table><thead><tr><th>팀원</th><th>이월</th><th>입금</th><th>사용</th><th>잔액</th></tr></thead><tbody>'+names.map((n,i)=>'<tr><th>'+esc(n)+'</th>'+[opening(i),monthly(i,'입금'),-monthly(i,'식사'),balance(i)].map(v=>'<td>'+won(v)+'</td>').join('')+'</tr>').join('')+'</tbody></table></div></section>');
- if(personal){bindMemberTabs();copy.onclick=async()=>{try{await navigator.clipboard.writeText(account.match(/[0-9][0-9-]{5,}/)?.[0]||account);notice('계좌 정보를 복사했습니다.')}catch{notice('위 계좌 정보를 선택해 복사해 주세요.')}}}
+ if(personal){bindMemberTabs(activeMembers);copy.onclick=async()=>{try{await navigator.clipboard.writeText(account.match(/[0-9][0-9-]{5,}/)?.[0]||account);notice('계좌 정보를 복사했습니다.')}catch{notice('위 계좌 정보를 선택해 복사해 주세요.')}}}
  else{rosterBtn.onclick=openRoster;checkBtn.onclick=openCheck;app.querySelectorAll("[data-deposit]").forEach(b=>b.onclick=()=>openForm("deposit",+b.dataset.deposit));lockBtn.onclick=()=>{unlocked=false;switchView('admin')};mealBtn.onclick=()=>openForm('meal');depositBtn.onclick=()=>openForm('deposit');app.querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>openForm('meal',+b.dataset.edit))}
 }
 function openRoster(){
