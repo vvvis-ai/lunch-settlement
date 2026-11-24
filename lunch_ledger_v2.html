@@ -1,0 +1,127 @@
+﻿<!doctype html>
+<html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>점심 장부 · 디자인 미리보기</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f6f6ef;color:#183a32;font:16px/1.5 system-ui,sans-serif}main{max-width:830px;margin:auto;padding:26px 18px 60px}header,.bar,.row,.line{display:flex;align-items:center;justify-content:space-between;gap:12px}header{padding-bottom:20px;border-bottom:1px solid #d8dfd6}header strong{font-size:24px;letter-spacing:-1.5px}nav{background:#e5e9df;padding:4px;border-radius:12px;display:flex}button,select,input{font:inherit;color:inherit;border:1px solid #cbd6cb;border-radius:9px;background:white;padding:9px 12px}button{cursor:pointer;font-weight:650}button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid #df9c28}nav button{border:0;background:transparent;font-size:14px}button.active,.primary{background:#165c49;color:white}h1{letter-spacing:-1px;font-size:26px}h2{font-size:18px;margin:0}p{margin:5px 0}.hero{background:#164e41;color:white;border-radius:20px;padding:25px 28px;margin:16px 0}.hero b{font-size:clamp(35px,7vw,52px);letter-spacing:-2px}.hero small{color:#d0ecdd}.badge{background:#ffe3a9;color:#614000;border-radius:8px;padding:3px 8px;font-size:13px}.card{background:white;border:1px solid #dce1d8;border-radius:16px;padding:20px;margin:14px 0}.row{border-top:1px solid #e6e9e2;padding:13px 0}.card h2{margin-bottom:12px}small,.muted{color:#556a60;font-size:14px}.money{font-variant-numeric:tabular-nums;white-space:nowrap}.actions{display:flex;gap:8px;flex-wrap:wrap}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}label.field{display:grid;gap:4px}input{min-width:0;width:100%}input[type=checkbox]{width:18px;height:18px;vertical-align:middle;accent-color:#165c49}summary{cursor:pointer}details{border-top:1px solid #e1e6de;padding:11px 0}details p{padding:8px;color:#52685c}.person{display:grid;grid-template-columns:minmax(72px,1fr) 1.5fr;align-items:center;gap:10px;padding:7px 0}.person label{white-space:nowrap}button:disabled,input:disabled{opacity:.5}footer{margin-top:22px;color:#607369;font-size:13px}#status{color:#126346;font-weight:bold}dialog{max-width:90vw;border:0;border-radius:15px;padding:24px}dialog::backdrop{background:#14342d70}@media(max-width:480px){.card,.hero{padding:16px}.bar{flex-wrap:wrap}header strong{font-size:21px}}
+.monthpick{display:flex;align-items:center;gap:10px;font-size:14px;color:#426859}.monthpick input{width:auto}.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:#d8e2d8;border:1px solid #d8e2d8;border-radius:14px;overflow:hidden;margin:14px 0}.stats div{background:white;padding:14px}.stats strong{display:block;font-size:19px}.hero{position:relative;overflow:hidden;background:linear-gradient(110deg,#124637,#23664f)}.hero:after{content:"";position:absolute;right:-42px;bottom:-94px;width:220px;height:220px;border:20px double #ffffff17;border-radius:50%;pointer-events:none}.scroll{overflow:auto}table{border-collapse:collapse;width:100%}td,th{padding:8px 5px;text-align:right;border-bottom:1px solid #e4e9e3;white-space:nowrap}th:first-child{text-align:left}th{font-size:14px}.actions button,nav button{min-height:44px}.actions{margin:12px 0}.delta{background:#edf4ed;border-radius:9px;padding:12px;margin:12px 0}summary{padding:4px}@media(max-width:500px){.stats div{padding:9px}.stats strong{font-size:15px}}
+</style><main><header><strong>◒ 점심 장부</strong><nav aria-label="화면 선택"><button id="team">팀원 조회</button><button id="admin">관리자</button></nav></header><div id="app"></div><p role="status" id="status"></p><footer>디자인 미리보기 · 예시 장부이며 변경 내용은 이 브라우저에 저장됩니다.</footer></main>
+<script>
+const account="토스뱅크 1000-6704-2292 안태욱";
+const names=['서윤','지민','현우'], key='lunch-ledger-v2', app=document.querySelector('#app');
+const today=new Date().toLocaleDateString('sv-SE'), month=today.slice(0,7), won=n=>n.toLocaleString('ko-KR')+'원';
+let period=month;
+const rosterKey=key+'-roster';
+const roster=JSON.parse(localStorage.getItem(rosterKey)||'null')||names.map(name=>({name,active:true}));
+names.splice(0,names.length,...roster.map(person=>person.name));
+const defaultSeedNames=['서윤','지민','현우'];
+const previous=new Date(+today.slice(0,4),+today.slice(5,7)-2,1).toLocaleDateString("sv-SE");
+const seed=()=>[...defaultSeedNames.map((name,i)=>({kind:'입금',date:previous,person:i,value:[20000,20000,20000][i]})),...defaultSeedNames.map((name,i)=>({kind:'입금',date:today,person:i,value:[10000,30000,20000][i]})),{kind:'식사',date:today,menu:'비빔밥',mode:'매장',meal:[9000,9000,9000],coffee:[4000,4000,0]}];
+let records=seed(),who=0,view='team',form='',edit=-1;
+try{records=JSON.parse(localStorage.getItem(key))||records;who=Number(localStorage.getItem(key+'-member'))||0}catch{}
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const options=()=>names.map((n,i)=>'<option value="'+i+'" '+(i===who?'selected':'')+'>'+esc(n)+'</option>').join('');
+const impact=(r,i)=>r.kind==='입금'?(r.person===i?r.value:0):-((r.meal[i]||0)+(r.coffee[i]||0));
+const amountFor=(i,test)=>records.filter(test).reduce((a,r)=>a+impact(r,i),0);
+const balance=i=>amountFor(i,r=>r.date.slice(0,7)<=period);
+const opening=i=>amountFor(i,r=>r.date.slice(0,7)<period);
+const monthly=(i,kind)=>amountFor(i,r=>r.date.startsWith(period)&&r.kind===kind);
+const sum=fn=>names.reduce((a,n,i)=>a+fn(i),0);
+let baseline=localStorage.getItem(key);
+
+function notice(s){document.querySelector('#status').textContent=s}
+async function save(next){if(!unlocked||view!=='admin')return;try{const write=()=>{if(baseline!==localStorage.getItem(key)){notice('다른 창에서 기록이 바뀌었습니다. 새로고침한 뒤 다시 입력하세요.');return false}
+ const value=JSON.stringify(next);localStorage.setItem(key,value);baseline=value;return true};
+ if(!(navigator.locks?await navigator.locks.request(key,write):write()))return;
+ period=document.querySelector('#day').value.slice(0,7);records=next;form='';edit=-1;render();notice('장부에 반영했습니다.')}catch{notice('저장 공간을 사용할 수 없습니다. 브라우저 설정을 확인해 주세요.')}}
+function switchView(v){view=v;form='';edit=-1;notice('');render()}
+let unlocked=false;
+const authKey=key+'-admin';
+async function verifier(password,salt){
+ const material=await crypto.subtle.importKey('raw',new TextEncoder().encode(password),'PBKDF2',false,['deriveBits']);
+ const bits=await crypto.subtle.deriveBits({name:'PBKDF2',salt:new Uint8Array(salt),iterations:600000,hash:'SHA-256'},material,256);
+ return Array.from(new Uint8Array(bits)).join('.');
+}
+function login(){
+ let stored;
+ try{stored=JSON.parse(localStorage.getItem(authKey))}catch{notice('비밀번호 저장소를 읽을 수 없습니다.');return}
+ const setup=!stored;
+ app.innerHTML='<form class="card" id="loginForm"><h2>'+ (setup?'관리자 비밀번호 설정':'관리자 로그인')+'</h2><p class="muted">'+(setup?'이 브라우저에서 사용할 비밀번호를 정해 주세요.':'이 브라우저에 설정한 비밀번호를 입력해 주세요.')+'</p><label class="field">비밀번호<input type="password" name="pass" required autocomplete="'+(setup?'new-password':'current-password')+'"></label>'+(setup?'<label class="field">비밀번호 확인<input type="password" name="confirmPass" required autocomplete="new-password"></label>':'')+'<p><button class="primary">'+(setup?'설정하고 열기':'로그인')+'</button></p></form>';
+ const form=document.querySelector('#loginForm');form.elements.pass.focus();
+ form.onsubmit=async e=>{
+  e.preventDefault();const password=form.elements.pass.value;
+  if(setup&&password!==form.elements.confirmPass.value){notice('두 비밀번호가 일치하지 않습니다.');return}
+  const button=form.querySelector('button');button.disabled=true;
+  try{
+   const salt=setup?Array.from(crypto.getRandomValues(new Uint8Array(16))):stored.salt;
+   const hash=await verifier(password,salt);
+   if(!form.isConnected)return;
+   if(setup){if(localStorage.getItem(authKey)){login();return}localStorage.setItem(authKey,JSON.stringify({salt,hash}))}
+   else if(hash!==stored.hash){notice('비밀번호를 다시 확인해 주세요.');form.elements.pass.select();return}
+   unlocked=true;switchView('admin')
+  }catch{notice('이 브라우저에서 비밀번호를 확인하거나 저장할 수 없습니다.')}finally{button.disabled=false}
+ }
+}
+team.onclick=()=>{unlocked=false;switchView('team')};admin.onclick=()=>switchView('admin');
+function render(){
+ team.className=view==='team'?'active':'';admin.className=view==='admin'?'active':'';
+ if(view==='admin'&&!unlocked){login();return}
+ const personal=view==='team', recent=records.slice().reverse().filter(r=>r.kind==='입금'&&r.person===who&&r.date.slice(0,7)<=period).sort((a,b)=>b.date.localeCompare(a.date)).at(0);
+ app.innerHTML='<div class="bar"><h1>'+(personal?'내 점심 장부':'팀 정산 관리')+'</h1>'+(personal?'<select id="member" aria-label="조회할 팀원">'+options()+'</select>':'')+'</div><label class="monthpick">조회 월 <input type="month" id="periodInput" value="'+period+'"></label>'+
+ '<section class="hero"><p>'+(personal?'내 점심 잔액':'팀원 선입금 잔액 합계')+'</p><b>'+won(personal?balance(who):names.reduce((a,n,i)=>a+balance(i),0))+'</b> '+(personal&&balance(who)<20000?'<span class="badge">충전 권장</span>':'')+'</section><div class="stats">'+[['전월 이월',opening],['이달 입금',i=>monthly(i,'입금')],['이달 사용',i=>-monthly(i,'식사')]].map(([label,fn])=>'<div><small>'+label+'</small><strong>'+won(personal?fn(who):sum(fn))+'</strong></div>').join('')+'</div>'+
+ (personal?'<section class="card"><div class="bar"><div><h2>관리자 입금 계좌</h2><p>'+esc(account)+'</p></div><button id="copy">계좌 복사</button></div><p class="muted">최근 반영된 입금 · '+(recent?recent.date+'　'+won(recent.value):'기록 없음')+'</p></section>':'<div class="actions"><button class="primary" id="mealBtn">오늘 식사 기록</button><button id="depositBtn">입금 기록</button><button id="rosterBtn">팀원 관리</button><button id="checkBtn">월말 검산</button><button id="lockBtn">잠금</button></div><div id="editor"></div>')+
+ '<section class="card"><h2>'+(personal?'내 거래 내역':'팀 거래 내역')+'</h2>'+records.map((r,i)=>({r,i})).reverse().sort((a,b)=>b.r.date.localeCompare(a.r.date)).filter(({r})=>r.date.startsWith(period)&&(!personal||impact(r,who))).map(({r,i})=>{
+ const dep=r.kind==='입금',value=personal?impact(r,who):dep?r.value:-names.reduce((a,n,j)=>a+(r.meal[j]||0)+(r.coffee[j]||0),0);
+ return '<details><summary>'+r.date.slice(5)+'　'+(dep?(personal?'입금':esc(names[r.person])+' 입금'):esc(r.menu)+' · '+r.mode)+'　<strong class="money">'+(value>0?'+':'')+won(value)+'</strong></summary>'+(dep?'<p>'+esc(names[r.person])+' 선입금 반영</p>'+(personal?'':'<button data-deposit="'+i+'">입금 정정</button>'):names.map((n,j)=>(!personal||who===j)&&(r.meal[j]||r.coffee[j])?'<p>'+esc(n)+' · 식사 '+won(r.meal[j])+' + 커피 '+won(r.coffee[j])+'</p>':'').join('')+(personal?'':'<button data-edit="'+i+'">식사 기록 수정</button>'))+'</details>'}).join('')+'</section>';
+ periodInput.onchange=e=>{if(e.target.value){period=e.target.value;notice('');render()}};
+ if(!app.querySelector('details'))app.querySelector('.card:last-child').insertAdjacentHTML('beforeend','<p class="muted">이 달에는 거래가 없습니다.</p>');
+ if(!personal)app.insertAdjacentHTML('beforeend','<section class="card"><h2>팀원별 월간 정산</h2><div class="scroll"><table><thead><tr><th>팀원</th><th>이월</th><th>입금</th><th>사용</th><th>잔액</th></tr></thead><tbody>'+names.map((n,i)=>'<tr><th>'+esc(n)+'</th>'+[opening(i),monthly(i,'입금'),-monthly(i,'식사'),balance(i)].map(v=>'<td>'+won(v)+'</td>').join('')+'</tr>').join('')+'</tbody></table></div></section>');
+ if(personal){member.onchange=e=>{who=+e.target.value;try{localStorage.setItem(key+'-member',who)}catch{}render()};copy.onclick=async()=>{try{await navigator.clipboard.writeText(account.match(/[0-9][0-9-]{5,}/)?.[0]||account);notice('계좌 정보를 복사했습니다.')}catch{notice('위 계좌 정보를 선택해 복사해 주세요.')}}}
+ else{rosterBtn.onclick=openRoster;checkBtn.onclick=openCheck;app.querySelectorAll("[data-deposit]").forEach(b=>b.onclick=()=>openForm("deposit",+b.dataset.deposit));lockBtn.onclick=()=>{unlocked=false;switchView('admin')};mealBtn.onclick=()=>openForm('meal');depositBtn.onclick=()=>openForm('deposit');app.querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>openForm('meal',+b.dataset.edit))}
+}
+function openRoster(){
+ const previous=localStorage.getItem(rosterKey);
+ editor.innerHTML='<form id="peopleForm" class="card"><h2>팀원 관리</h2>'+roster.map((person,i)=>'<div class="person"><label><input type="checkbox" id="active'+i+'" '+(person.active?'checked':'')+'> 활동 중</label><input aria-label="팀원 이름" id="name'+i+'" required maxlength="24"></div>').join('')+'<label class="field">새 팀원<input name="newName" maxlength="24" placeholder="추가할 이름"></label><p class="muted">활동을 종료해도 지난 거래와 잔액은 보존됩니다.</p><button class="primary">팀원 저장</button></form>';
+ roster.forEach((person,i)=>document.getElementById('name'+i).value=person.name);
+ peopleForm.onsubmit=e=>{e.preventDefault();if(previous!==localStorage.getItem(rosterKey)){notice('팀원 목록이 변경되었습니다. 새로고침해 주세요.');return}
+ const next=roster.map((_,i)=>({name:document.getElementById('name'+i).value.trim(),active:document.getElementById('active'+i).checked}));
+ const added=peopleForm.elements.newName.value.trim();if(added)next.push({name:added,active:true});
+ if(next.some(p=>!p.name)||new Set(next.map(p=>p.name)).size!==next.length){notice('팀원 이름을 비어 있거나 중복되지 않게 입력해 주세요.');return}
+ try{localStorage.setItem(rosterKey,JSON.stringify(next));roster.splice(0,roster.length,...next);names.splice(0,names.length,...next.map(person=>person.name));render();notice('팀원 목록을 저장했습니다.')}catch{notice('저장 공간을 확인해 주세요.')}}
+}
+function openCheck(){
+ const k=key+'-check-'+period, previous=JSON.parse(localStorage.getItem(k)||'null'), total=sum(balance);
+ editor.innerHTML='<form class="card" id="checkForm"><h2>'+period+' 월말 검산</h2><p class="muted">관리자 계좌와 e바구페이에 보관한 팀 자금만 입력하세요.</p><div class="grid"><label class="field">계좌 내 팀 자금 (원)<input name="bank" type="number" min="0" required></label><label class="field">e바구페이 팀 자금 (원)<input name="pay" type="number" min="0" required></label></div><p class="delta" id="difference"></p><button class="primary">검산 금액 저장</button></form>';
+ const f=document.querySelector('#checkForm');f.elements.bank.value=previous?.bank??'';f.elements.pay.value=previous?.pay??0;
+ const update=()=>{const diff=Number(f.elements.bank.value)+Number(f.elements.pay.value)-total;
+ difference.textContent='장부 잔액 '+won(total)+(f.elements.bank.value===''?'':diff===0?' · 확인 금액 일치':' · 확인 금액이 '+won(Math.abs(diff))+(diff>0?' 많습니다':' 적습니다'))};
+ f.oninput=update;update();f.onsubmit=e=>{e.preventDefault();if(baseline!==localStorage.getItem(key)){notice('장부가 바뀌었습니다. 새로고침 후 검산해 주세요.');return}try{localStorage.setItem(k,JSON.stringify({bank:Number(f.elements.bank.value),pay:Number(f.elements.pay.value)}));notice(period+' 검산 금액을 저장했습니다.')}catch{notice('저장 공간을 확인해 주세요.')}};
+ editor.scrollIntoView({block:'start'})
+}
+function openForm(type,index=-1){
+ edit=index;notice('');const r=records[index], deposit=type==='deposit';
+ editor.innerHTML='<form class="card" id="entry"><h2>'+(deposit?(r?'입금 정정':'입금 기록'):r?'식사 기록 수정':'오늘 식사 기록')+'</h2><div class="grid"><label class="field">날짜<input id="day" type="date" required value="'+(r?.date||today)+'"></label>'+
+ (deposit?'<label class="field">입금자<select id="payer">'+options()+'</select></label><label class="field">입금액 (원)<input id="amount" type="number" min="1" step="1" required></label>':'<label class="field">식사 방식<select id="mode"><option>매장</option><option '+(r?.mode==='배달'?'selected':'')+'>배달</option></select></label><label class="field">메뉴<input id="menu" required placeholder="예: 비빔밥" value="'+esc(r?.menu||'')+'"></label>')+'</div><div id="parts"></div><div class="actions"><button class="primary">저장</button><button type="button" id="cancel">닫기</button></div></form>';
+ cancel.onclick=()=>{editor.innerHTML='';edit=-1};
+ if(!deposit){
+ const available=i=>roster[i].active||!!(r?.meal[i]||r?.coffee[i]);
+ const group=(id,title,values)=>'<section><h3>'+title+'</h3><div class="actions"><label><input type="checkbox" id="'+id+'All"> 전체 선택</label><input type="number" min="0" step="1" id="'+id+'Common" placeholder="공통 금액 (원)" aria-label="'+title+' 공통 금액"><button type="button" id="'+id+'Apply">선택한 사람에게 적용</button></div>'+names.map((n,i)=>'<div class="person"><label><input type="checkbox" id="'+id+'c'+i+'" '+(!available(i)?'disabled ':'')+(values[i]?'checked':'')+'> '+esc(n)+'</label><input type="number" min="0" step="1" id="'+id+i+'" aria-label="'+esc(n)+' '+title+'" placeholder="금액 (원)" value="'+(values[i]||'')+'"></div>').join('')+'</section>';
+ parts.innerHTML=group('m','식사 참여자',r?.meal||[])+'<hr><label><input type="checkbox" id="withCoffee"> 커피 추가</label><div id="coffeeBox">'+group('c','커피 마신 사람',r?.coffee||[])+'</div><div id="preview" class="card" aria-live="polite"></div>';
+ const el=id=>document.getElementById(id);
+ withCoffee.checked=!!r?.coffee.some(Boolean);
+ function values(id){return names.map((n,i)=>el(id+'c'+i).checked&&(id==='m'||withCoffee.checked)?Number(el(id+i).value):0)}
+ function refresh(){coffeeBox.hidden=!withCoffee.checked;for(const id of ['m','c']){el(id+'All').checked=names.every((_,i)=>!available(i)||el(id+'c'+i).checked);names.forEach((_,i)=>{el(id+i).disabled=!el(id+'c'+i).checked||(id==='c'&&!withCoffee.checked)})}
+ const totals=values('m').map((v,i)=>v+values('c')[i]);preview.innerHTML='<h2>차감 미리보기</h2>'+names.map((n,i)=>'<div class="line"><span>'+esc(n)+'</span><span>'+won(totals[i])+'</span></div>').join('')+'<div class="row"><b>총 차감액</b><b>'+won(totals.reduce((a,b)=>a+b,0))+'</b></div>'}
+ for(const id of ['m','c']){el(id+'All').onchange=e=>{names.forEach((_,i)=>el(id+'c'+i).checked=available(i)&&e.target.checked);refresh()};el(id+'Apply').onclick=()=>{const input=el(id+'Common');if(!input.reportValidity()||!input.value)return;names.forEach((_,i)=>{if(el(id+'c'+i).checked)el(id+i).value=input.value});refresh()}}
+ withCoffee.onchange=()=>{if(!withCoffee.checked){const amounts=names.map((_,i)=>el('cc'+i).checked?Number(el('c'+i).value):0),sum=amounts.reduce((a,b)=>a+b,0);if(sum&&!confirm('커피 '+amounts.filter(Boolean).length+'명분 '+won(sum)+'을 정산에서 뺄까요?'))withCoffee.checked=true;else names.forEach((_,i)=>{el('cc'+i).checked=false;el('c'+i).value=''})}refresh()};entry.oninput=refresh;refresh();
+ entry.onsubmit=e=>{e.preventDefault();const meal=values('m'),coffee=values('c');if(!menu.value.trim()||!meal.concat(coffee).some(Boolean)){notice('메뉴와 차감할 금액을 입력해 주세요.');return}const item={kind:'식사',date:day.value,menu:menu.value.trim(),mode:mode.value,meal,coffee};const next=records.slice();next[index<0?next.length:index]=item;save(next)}
+ }else{
+ if(r){payer.value=r.person;amount.value=r.value;parts.innerHTML='<p class="delta">기존 기록 · '+r.date+'　'+esc(names[r.person])+'　'+won(r.value)+'</p>'}
+ entry.onsubmit=e=>{e.preventDefault();const item={kind:'입금',date:day.value,person:Number(payer.value),value:Number(amount.value)};
+ if(r&&!confirm(r.date+' '+esc(names[r.person])+' '+won(r.value)+' → '+item.date+' '+names[item.person]+' '+won(item.value)+'으로 정정할까요?'))return;
+ const next=records.slice();next[index<0?next.length:index]=item;save(next)}
+ }
+ editor.scrollIntoView({block:'start'})
+}
+render();
+</script></html>
+
+
